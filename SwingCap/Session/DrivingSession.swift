@@ -34,4 +34,12 @@ final class DrivingSession {
     }
 
     var clipCount: Int { clips.count }
+
+#if DEBUG
+    /// Appends a pre-built clip directly — used by the simulator debug button
+    /// and unit tests to populate the session without a live camera.
+    func injectClipForDebug(_ clip: Clip) {
+        clips.append(clip)
+    }
+#endif
 }

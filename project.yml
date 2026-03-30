@@ -42,6 +42,9 @@ targets:
     sources:
       - path: SwingCapTests
         optional: true
+    resources:
+      - path: SwingCapTests/Resources
+        optional: true
     dependencies:
       - target: SwingCap
     settings:

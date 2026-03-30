@@ -1,13 +1,37 @@
 import SwiftUI
 
 /// Scrollable grid of clip thumbnails for post-session review.
-/// Receives the live `DrivingSession` reference so the grid
-/// updates automatically if new clips arrive while the sheet is open.
+///
+/// Two initialisers are available:
+/// - `init(session:)` — live active session; grid stays reactive.
+/// - `init(clips:title:)` — static array for history playback.
 struct ClipGridView: View {
 
-    let session: DrivingSession
+    private let clips: [Clip]
+    private let title: String
+    /// When non-nil, the grid is backed by a live session and stays reactive.
+    private let liveSession: DrivingSession?
+
     @State private var selectedClip: Clip?
     @Environment(\.dismiss) private var dismiss
+
+    // Live session init (active session review)
+    init(session: DrivingSession) {
+        self.liveSession = session
+        self.clips = []          // unused — body reads from liveSession
+        self.title = "Clips"
+    }
+
+    // Static init (history viewer)
+    init(clips: [Clip], title: String = "Clips") {
+        self.liveSession = nil
+        self.clips = clips
+        self.title = title
+    }
+
+    private var displayedClips: [Clip] {
+        liveSession?.clips ?? clips
+    }
 
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
@@ -16,13 +40,13 @@ struct ClipGridView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                if session.clips.isEmpty {
+                if displayedClips.isEmpty {
                     emptyState
                 } else {
                     clipGrid
                 }
             }
-            .navigationTitle("Clips")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -43,7 +67,7 @@ struct ClipGridView: View {
     private var clipGrid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(session.clips) { clip in
+                ForEach(displayedClips) { clip in
                     ClipThumbnailCell(clip: clip)
                         .onTapGesture { selectedClip = clip }
                 }

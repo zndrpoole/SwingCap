@@ -1,4 +1,5 @@
 import AVFoundation
+import Photos
 import SwiftUI
 
 /// Full-screen video player for reviewing a single swing clip.
@@ -8,6 +9,11 @@ struct ClipPlayerView: View {
     let clip: Clip
     @Environment(\.dismiss) private var dismiss
     @State private var vm: ClipPlayerViewModel
+    @State private var exportState: ExportState = .idle
+
+    private enum ExportState {
+        case idle, saving, saved, failed
+    }
 
     init(clip: Clip) {
         self.clip = clip
@@ -24,7 +30,8 @@ struct ClipPlayerView: View {
 
             controls
         }
-        .overlay(alignment: .topTrailing) { dismissButton }
+        .overlay(alignment: .topTrailing) { topTrailingButtons }
+        .overlay(alignment: .top) { exportToast }
         .preferredColorScheme(.dark)
         .onDisappear { vm.player.pause() }
     }
@@ -131,18 +138,89 @@ struct ClipPlayerView: View {
         .padding(.bottom, 4)
     }
 
-    // MARK: - Dismiss
+    // MARK: - Top-trailing buttons (dismiss + share)
 
-    private var dismissButton: some View {
-        Button { dismiss() } label: {
-            Image(systemName: "xmark.circle.fill")
-                .font(.title2)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.white)
+    private var topTrailingButtons: some View {
+        HStack(spacing: 12) {
+            // Share / Save to Photos
+            Button {
+                saveToPhotos()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(exportState == .saving ? .gray : .white)
+            }
+            .buttonStyle(.plain)
+            .disabled(exportState == .saving)
+
+            // Dismiss
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
         .padding(.top, 56)
         .padding(.trailing, 20)
+    }
+
+    private var exportToast: some View {
+        Group {
+            switch exportState {
+            case .saved:
+                Label("Saved to Photos", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.green.opacity(0.85), in: Capsule())
+                    .padding(.top, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            case .failed:
+                Label("Save failed", systemImage: "xmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.red.opacity(0.85), in: Capsule())
+                    .padding(.top, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            default:
+                EmptyView()
+            }
+        }
+        .animation(.spring(duration: 0.3), value: exportState == .saved || exportState == .failed)
+    }
+
+    // MARK: - Save to Photos
+
+    private func saveToPhotos() {
+        guard exportState != .saving else { return }
+        exportState = .saving
+
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async { self.exportState = .failed }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: self.clip.url)
+            }) { success, _ in
+                DispatchQueue.main.async {
+                    self.exportState = success ? .saved : .failed
+                    // Auto-clear the toast after 2.5 s
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(2.5))
+                        if self.exportState == .saved || self.exportState == .failed {
+                            self.exportState = .idle
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Helpers

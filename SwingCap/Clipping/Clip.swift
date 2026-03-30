@@ -19,4 +19,13 @@ struct Clip: Identifiable, Sendable {
         self.thumbnail = thumbnail
         self.duration = duration
     }
+
+    /// Memberwise initialiser used when reconstructing a `Clip` from persisted data.
+    init(id: UUID, url: URL, createdAt: Date, thumbnail: UIImage?, duration: TimeInterval) {
+        self.id = id
+        self.url = url
+        self.createdAt = createdAt
+        self.thumbnail = thumbnail
+        self.duration = duration
+    }
 }
