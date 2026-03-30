@@ -1,13 +1,14 @@
 import SwiftUI
 
-/// The main screen shown during an active driving-range session.
-/// Phase 1: displays the live camera feed and buffer stats.
-/// Phase 2: will show clip count and detection status overlay.
+/// The main screen during an active driving-range session.
+/// Shows the live camera feed with a HUD overlay.
 struct SessionView: View {
 
     @State private var camera = CameraSession()
     @State private var processor: FrameProcessor?
+    @State private var session = DrivingSession()
     @State private var setupError: CameraError?
+    @State private var showClipFlash = false
 
     var body: some View {
         ZStack {
@@ -33,35 +34,80 @@ struct SessionView: View {
 
     private var hud: some View {
         VStack {
+            // Top-right: clip counter
+            HStack {
+                Spacer()
+                clipCounter
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
+            }
+
             Spacer()
+
+            // Bottom-center: status pill
             statusPill
                 .padding(.bottom, 48)
         }
+        // Brief white flash when a clip is saved
+        .overlay {
+            if showClipFlash {
+                Color.white.opacity(0.3)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: showClipFlash)
+    }
+
+    private var clipCounter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "video.fill")
+                .font(.caption)
+            Text("\(session.clipCount)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.semibold)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .opacity(session.clipCount > 0 ? 1 : 0)
+        .animation(.easeIn(duration: 0.2), value: session.clipCount)
     }
 
     private var statusPill: some View {
         HStack(spacing: 8) {
+            // Live indicator
             Circle()
-                .fill(camera.isRunning ? Color.green : Color.orange)
+                .fill(statusColor)
                 .frame(width: 8, height: 8)
 
-            Text(camera.isRunning ? "Watching for impact…" : "Starting camera…")
+            Text(statusLabel)
                 .font(.caption)
                 .foregroundStyle(.white)
 
-            if let proc = processor {
-                Divider()
-                    .frame(height: 12)
-                    .background(.white.opacity(0.4))
-
-                Text("\(proc.rollingBuffer.frameCount) frames buffered")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
+            if session.isExporting {
+                Divider().frame(height: 12).background(.white.opacity(0.4))
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .tint(.white)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    private var statusColor: Color {
+        if !camera.isRunning { return .orange }
+        if session.isExporting { return .yellow }
+        return .green
+    }
+
+    private var statusLabel: String {
+        if !camera.isRunning { return "Starting camera…" }
+        if session.isExporting { return "Saving clip…" }
+        return "Watching for impact…"
     }
 
     private func errorView(_ error: CameraError) -> some View {
@@ -83,6 +129,14 @@ struct SessionView: View {
         let proc = FrameProcessor()
         self.processor = proc
         camera.frameProcessor = proc
+
+        proc.onFrameWindowReady = { [session] frames in
+            session.handleFrameWindow(frames)
+            Task { @MainActor in
+                await flashScreen()
+            }
+        }
+
         do {
             try camera.configure()
             camera.start()
@@ -91,6 +145,13 @@ struct SessionView: View {
         } catch {
             setupError = .deviceUnavailable
         }
+    }
+
+    @MainActor
+    private func flashScreen() async {
+        showClipFlash = true
+        try? await Task.sleep(for: .milliseconds(200))
+        showClipFlash = false
     }
 }
 
