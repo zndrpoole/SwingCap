@@ -76,7 +76,9 @@ final class BallStrikeDetector {
     // MARK: - Debug
 
 #if DEBUG
-    /// Exposes the active detector type name for unit tests.
+    /// Exposes the active detector type name for unit tests and the debug overlay.
     var detectorTypeName: String { String(describing: type(of: implementation)) }
+    /// Most-recent raw detection score forwarded from the active implementation.
+    var lastScore: Float { implementation.lastScore }
 #endif
 }

@@ -67,6 +67,10 @@ final class CoreMLBallDetector: StrikeDetectorProtocol {
 
     var onStrike: ((StrikeEvent) -> Void)?
 
+#if DEBUG
+    private(set) var lastScore: Float = 0
+#endif
+
     // MARK: - Init
 
     init(vnModel: VNCoreMLModel) {
@@ -116,6 +120,9 @@ final class CoreMLBallDetector: StrikeDetectorProtocol {
         try? handler.perform([request])
 
         let topObs = bestBallObservation(from: request.results)
+#if DEBUG
+        lastScore = topObs?.labels.first?.confidence ?? 0
+#endif
         updateTrackingState(observation: topObs, pts: pts)
     }
 

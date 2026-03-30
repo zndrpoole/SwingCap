@@ -15,6 +15,9 @@ struct SessionView: View {
     @State private var showHistory = false
     /// The SwiftData record for the current active session, created on first launch.
     @State private var activeRecord: PersistedSession?
+    @State private var showSettings = false
+    @State private var sessionElapsed: TimeInterval = 0
+    private let sessionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -30,6 +33,10 @@ struct SessionView: View {
         .task { await startCamera() }
         .onDisappear { camera.stop() }
         .onChange(of: session.clips.count) { _, _ in persistLatestClip() }
+        .onReceive(sessionTimer) { _ in
+            guard camera.isRunning else { return }
+            sessionElapsed = Date().timeIntervalSince(session.startedAt)
+        }
     }
 
     // MARK: - Subviews
@@ -51,6 +58,9 @@ struct SessionView: View {
                 historyButton
                     .padding(.top, 16)
                     .padding(.leading, 16)
+                settingsButton
+                    .padding(.top, 16)
+                    .padding(.leading, 8)
                 Spacer()
                 clipCounter
                     .padding(.top, 16)
@@ -72,6 +82,21 @@ struct SessionView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: showClipFlash)
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            if let proc = processor {
+                DebugOverlayView(
+                    motionScore: proc.detector.lastScore,
+                    detectorType: proc.detector.detectorTypeName,
+                    bufferedFrames: proc.rollingBuffer.frameCount,
+                    isExporting: session.isExporting,
+                    clipCount: session.clipCount
+                )
+                .padding(.leading, 16)
+                .padding(.bottom, 120)
+            }
+        }
+#endif
         .sheet(isPresented: $showClipReview) {
             ClipGridView(session: session)
                 .presentationDetents([.large])
@@ -81,21 +106,48 @@ struct SessionView: View {
             SessionHistoryView()
                 .environment(sessionStore)
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
 
     private var historyButton: some View {
-        Button {
+        let totalClips = sessionStore.pastSessions.reduce(0) { $0 + $1.clipCount }
+        return Button {
             showHistory = true
         } label: {
-            Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.ultraThinMaterial, in: Circle())
+
+                if totalClips > 0 {
+                    Text("\(min(totalClips, 99))")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.green, in: Capsule())
+                        .offset(x: 4, y: -4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .opacity(sessionStore.pastSessions.isEmpty ? 0 : 1)
+        .animation(.easeIn(duration: 0.2), value: sessionStore.pastSessions.count)
+    }
+
+    private var settingsButton: some View {
+        Button { showSettings = true } label: {
+            Image(systemName: "gearshape")
                 .font(.caption)
                 .foregroundStyle(.white)
                 .padding(8)
                 .background(.ultraThinMaterial, in: Circle())
         }
         .buttonStyle(.plain)
-        .opacity(sessionStore.pastSessions.isEmpty ? 0 : 1)
-        .animation(.easeIn(duration: 0.2), value: sessionStore.pastSessions.count)
     }
 
     private var clipCounter: some View {
@@ -133,9 +185,10 @@ struct SessionView: View {
 
             if session.isExporting {
                 Divider().frame(height: 12).background(.white.opacity(0.4))
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .tint(.white)
+                ProgressView(value: session.exportProgress)
+                    .progressViewStyle(.linear)
+                    .tint(.green)
+                    .frame(width: 48)
             }
         }
         .padding(.horizontal, 14)
@@ -152,7 +205,12 @@ struct SessionView: View {
     private var statusLabel: String {
         if !camera.isRunning { return "Starting camera…" }
         if session.isExporting { return "Saving clip…" }
-        return "Watching for impact…"
+        return "Watching for impact…  \(formatElapsed(sessionElapsed))"
+    }
+
+    private func formatElapsed(_ t: TimeInterval) -> String {
+        let m = Int(t) / 60, s = Int(t) % 60
+        return String(format: "%d:%02d", m, s)
     }
 
     private func errorView(_ error: CameraError) -> some View {

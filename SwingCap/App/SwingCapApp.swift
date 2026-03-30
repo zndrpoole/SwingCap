@@ -2,13 +2,19 @@ import SwiftUI
 
 @main
 struct SwingCapApp: App {
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var sessionStore = SessionStore()
 
     var body: some Scene {
         WindowGroup {
-            SessionView()
-                .environment(sessionStore)
-                .preferredColorScheme(.dark)
+            if hasCompletedOnboarding {
+                SessionView()
+                    .environment(sessionStore)
+                    .preferredColorScheme(.dark)
+            } else {
+                OnboardingView()
+                    .preferredColorScheme(.dark)
+            }
         }
     }
 }

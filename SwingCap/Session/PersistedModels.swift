@@ -14,6 +14,8 @@ final class PersistedClip {
     /// JPEG-compressed thumbnail (~50–150 KB each).
     var thumbnailData: Data?
     var duration: TimeInterval
+    /// Optional user note attached to this clip.
+    var notes: String
 
     init(from clip: Clip) {
         self.id = clip.id
@@ -21,6 +23,7 @@ final class PersistedClip {
         self.createdAt = clip.createdAt
         self.thumbnailData = clip.thumbnail?.jpegData(compressionQuality: 0.7)
         self.duration = clip.duration
+        self.notes = ""
     }
 
     func toClip() -> Clip {

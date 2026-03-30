@@ -37,6 +37,7 @@ final class SessionStore {
         self.container = container
         self.context = ModelContext(container)
         fetchSessions()
+        cleanOrphanedFiles()
     }
 
     // MARK: - Session lifecycle
@@ -79,5 +80,10 @@ final class SessionStore {
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )
         pastSessions = (try? context.fetch(descriptor)) ?? []
+    }
+
+    private func cleanOrphanedFiles() {
+        let known = Set(pastSessions.flatMap { $0.clips.map(\.fileName) })
+        ClipStorageManager.deleteOrphanedFiles(knownFileNames: known)
     }
 }

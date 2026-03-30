@@ -70,10 +70,24 @@ struct ClipGridView: View {
                 ForEach(displayedClips) { clip in
                     ClipThumbnailCell(clip: clip)
                         .onTapGesture { selectedClip = clip }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                deleteClip(clip)
+                            } label: {
+                                Label("Delete Clip", systemImage: "trash")
+                            }
+                        }
                 }
             }
             .padding(16)
         }
+    }
+
+    private func deleteClip(_ clip: Clip) {
+        // Remove the MP4 file from disk
+        try? FileManager.default.removeItem(at: clip.url)
+        // Remove from live session if applicable
+        liveSession?.removeClip(clip)
     }
 
     private var emptyState: some View {

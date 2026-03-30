@@ -29,6 +29,10 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
     var onStrike: ((StrikeEvent) -> Void)?
 
+#if DEBUG
+    private(set) var lastScore: Float = 0
+#endif
+
     // MARK: - StrikeDetectorProtocol
 
     func process(_ sampleBuffer: CMSampleBuffer) {
@@ -44,6 +48,9 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
         }
 
         let score = motionScore(current: current, previous: previous)
+#if DEBUG
+        lastScore = score
+#endif
         guard score > Self.motionThreshold else { return }
 
         lastStrikeTime = pts

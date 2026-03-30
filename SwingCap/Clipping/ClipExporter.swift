@@ -28,8 +28,15 @@ actor ClipExporter {
     // MARK: - Export
 
     /// Encodes `frames` into an MP4 and returns a `Clip`.
+    /// - Parameters:
+    ///   - frames: Ordered array of captured frames.
+    ///   - onProgress: Optional closure called with progress in [0, 1] as frames are encoded.
+    ///                 Called from within the actor (not main thread).
     /// - Throws: `ExportError` if encoding fails.
-    func export(frames: [CMSampleBuffer]) async throws -> Clip {
+    func export(
+        frames: [CMSampleBuffer],
+        onProgress: ((Float) -> Void)? = nil
+    ) async throws -> Clip {
         guard let firstFrame = frames.first else { throw ExportError.noFrames }
 
         let outputURL = outputDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -44,7 +51,8 @@ actor ClipExporter {
         let baseTime = CMSampleBufferGetPresentationTimeStamp(firstFrame)
         writer.startSession(atSourceTime: .zero)
 
-        for frame in frames {
+        let total = frames.count
+        for (index, frame) in frames.enumerated() {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(frame) else { continue }
 
             // Spin until the input is ready; yields to the Swift concurrency
@@ -54,6 +62,8 @@ actor ClipExporter {
             let pts = CMSampleBufferGetPresentationTimeStamp(frame)
             let relativePTS = CMTimeSubtract(pts, baseTime)
             adaptor.append(pixelBuffer, withPresentationTime: relativePTS)
+
+            onProgress?(Float(index + 1) / Float(total))
         }
 
         input.markAsFinished()

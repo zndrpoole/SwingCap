@@ -19,7 +19,7 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     // MARK: - Dependencies
 
     let rollingBuffer: RollingFrameBuffer
-    private let detector: BallStrikeDetector
+    let detector: BallStrikeDetector
 
     /// Called (on the frames queue) when a complete pre+post window is ready.
     /// Ownership of the frame array is transferred to the caller.

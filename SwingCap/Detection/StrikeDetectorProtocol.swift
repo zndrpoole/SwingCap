@@ -7,4 +7,8 @@ protocol StrikeDetectorProtocol: AnyObject {
     var onStrike: ((StrikeEvent) -> Void)? { get set }
     /// Process one camera frame. Must return quickly; heavy work dispatches async.
     func process(_ sampleBuffer: CMSampleBuffer)
+#if DEBUG
+    /// Most-recent raw detection score (motion score or ML confidence).
+    var lastScore: Float { get }
+#endif
 }
