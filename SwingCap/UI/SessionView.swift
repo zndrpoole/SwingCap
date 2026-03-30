@@ -9,6 +9,7 @@ struct SessionView: View {
     @State private var session = DrivingSession()
     @State private var setupError: CameraError?
     @State private var showClipFlash = false
+    @State private var showClipReview = false
 
     var body: some View {
         ZStack {
@@ -57,22 +58,33 @@ struct SessionView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: showClipFlash)
+        .sheet(isPresented: $showClipReview) {
+            ClipGridView(session: session)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var clipCounter: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "video.fill")
-                .font(.caption)
-            Text("\(session.clipCount)")
-                .font(.caption.monospacedDigit())
-                .fontWeight(.semibold)
+        Button {
+            guard session.clipCount > 0 else { return }
+            showClipReview = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "video.fill")
+                    .font(.caption)
+                Text("\(session.clipCount)")
+                    .font(.caption.monospacedDigit())
+                    .fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .opacity(session.clipCount > 0 ? 1 : 0)
+            .animation(.easeIn(duration: 0.2), value: session.clipCount)
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-        .opacity(session.clipCount > 0 ? 1 : 0)
-        .animation(.easeIn(duration: 0.2), value: session.clipCount)
+        .buttonStyle(.plain)
     }
 
     private var statusPill: some View {
