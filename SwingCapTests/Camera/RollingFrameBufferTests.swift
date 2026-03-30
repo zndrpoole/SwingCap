@@ -1,6 +1,7 @@
 import XCTest
 import CoreMedia
 import CoreVideo
+import Darwin
 @testable import SwingCap
 
 final class RollingFrameBufferTests: XCTestCase {
@@ -124,6 +125,113 @@ final class RollingFrameBufferTests: XCTestCase {
         try buffer.append(makeSampleBuffer())
         _ = buffer.snapshot()
         XCTAssertEqual(buffer.frameCount, 1)
+    }
+
+    /// Creates a 1280×720 pixel buffer to simulate real capture frames.
+    private func makeLargeSampleBuffer(presentationTime pts: CMTime = .zero) throws -> CMSampleBuffer {
+        var pixelBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, 1280, 720,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            attrs as CFDictionary,
+            &pixelBuffer
+        )
+        guard status == kCVReturnSuccess, let pb = pixelBuffer else {
+            throw XCTSkip("CVPixelBufferCreate (large) failed — skipping on this platform")
+        }
+
+        var formatDesc: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pb,
+            formatDescriptionOut: &formatDesc
+        )
+        guard let fd = formatDesc else { throw XCTSkip("Format description unavailable") }
+
+        var timingInfo = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 60),
+            presentationTimeStamp: pts,
+            decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pb,
+            formatDescription: fd,
+            sampleTiming: &timingInfo,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard let sb = sampleBuffer else { throw XCTSkip("Could not create large sample buffer") }
+        return sb
+    }
+
+    /// Fills the buffer to 2× capacity with full 1280×720 frames and verifies
+    /// the retained count never exceeds `capacity` (eviction is working).
+    func test_memoryPressure_frameCountNeverExceedsCapacity() throws {
+        let capacity = RollingFrameBuffer.defaultCapacity   // 120
+        let buffer = RollingFrameBuffer(capacity: capacity)
+
+        for i in 0..<(capacity * 2) {
+            let frame = try makeLargeSampleBuffer(
+                presentationTime: CMTime(value: CMTimeValue(i), timescale: 60)
+            )
+            buffer.append(frame)
+            XCTAssertLessThanOrEqual(
+                buffer.frameCount, capacity,
+                "Frame count exceeded capacity at append \(i)"
+            )
+        }
+
+        XCTAssertEqual(buffer.frameCount, capacity)
+
+        // Verify most-recent frames are retained
+        let snap = buffer.snapshot()
+        let lastPTS = CMTimeGetSeconds(
+            CMSampleBufferGetPresentationTimeStamp(snap.last!)
+        )
+        let expectedLastPTS = Double(capacity * 2 - 1) / 60.0
+        XCTAssertEqual(lastPTS, expectedLastPTS, accuracy: 0.0001)
+    }
+
+    /// Peak memory growth while filling the buffer should stay below 250 MB
+    /// (120 frames × ~1.38 MB per 720p YCbCr frame ≈ 166 MB, with headroom).
+    func test_memoryPressure_peakMemoryWithinBudget() throws {
+        let capacity = RollingFrameBuffer.defaultCapacity
+        let budgetBytes: Int64 = 250 * 1024 * 1024   // 250 MB
+
+        var peakDelta: Int64 = 0
+        let baselineBytes = currentMemoryBytes()
+
+        let buffer = RollingFrameBuffer(capacity: capacity)
+        for i in 0..<(capacity * 2) {
+            if let frame = try? makeLargeSampleBuffer(
+                presentationTime: CMTime(value: CMTimeValue(i), timescale: 60)
+            ) {
+                buffer.append(frame)
+                let delta = currentMemoryBytes() - baselineBytes
+                if delta > peakDelta { peakDelta = delta }
+            }
+        }
+
+        XCTAssertLessThanOrEqual(
+            peakDelta, budgetBytes,
+            "Rolling buffer peak memory \(peakDelta / 1024 / 1024) MB exceeded budget of \(budgetBytes / 1024 / 1024) MB"
+        )
+    }
+
+    /// Returns the current resident memory of the test process in bytes.
+    private func currentMemoryBytes() -> Int64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int64(info.resident_size) : 0
     }
 
     func test_concurrentAppends_doNotCrash() throws {

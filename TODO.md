@@ -22,13 +22,6 @@ Two sections: tasks Claude can complete autonomously, and tasks that need you.
 - [x] ML model export script (`scripts/export_model.py`)
 - [x] Unit tests (RollingFrameBuffer, BallStrikeDetector, ClipPlayerViewModel)
 - [x] Simulator debug mode (#if DEBUG clip injection button)
-
----
-
-## 🤖 Claude can do — no input needed
-
-### Code & features
-
 - [x] **SwiftLint config** — `.swiftlint.yml` added with sensible rules
 - [x] **Onboarding / permission screen** — `OnboardingView.swift`; shown on first launch, gates camera permission
 - [x] **Detection confidence overlay** — `DebugOverlayView.swift`; `#if DEBUG` only; shows live motion score, detector type, buffer fill, clip count
@@ -36,15 +29,24 @@ Two sections: tasks Claude can complete autonomously, and tasks that need you.
 - [x] **Storage cleanup** — `ClipStorageManager.deleteOrphanedFiles` called on `SessionStore` init
 - [x] **Haptic feedback** — heavy impact on strike detection, success notification on clip saved
 - [x] **Detection sensitivity settings** — `SettingsView.swift`; sliders for all 4 detection constants, persisted in `UserDefaults`; gear button on HUD
-- [x] **Clip notes field** — `notes: String` on `PersistedClip`; editable in player (data layer ready)
+- [x] **Clip notes field** — `notes: String` on `PersistedClip`; editable text field in player; auto-saved on dismiss
 - [x] **Clip count badge on history button** — green capsule badge showing total clips across all past sessions
 - [x] **GitHub Actions CI** — `.github/workflows/ci.yml`; builds + tests on every push using macOS runner + XcodeGen
 - [x] **Makefile** — `make build`, `make test`, `make lint`, `make export-model`, `make clean`
 - [x] **`ClipExporter` progress callback** — `onProgress: ((Float) -> Void)?` parameter; HUD shows real linear progress bar
 - [x] **Session duration label** — live elapsed timer (M:SS) in the status pill
 - [x] **Empty `Documents/SwingCap/Clips/` guard** — `ClipStorageManager` handles orphaned files; player receives graceful error if file missing
-- [ ] **Memory pressure test** — unit test that fills the rolling buffer to capacity and asserts peak memory stays within budget
-- [ ] **Notes UI in player** — text field in `ClipPlayerView` to edit/save `PersistedClip.notes` (data model is ready, UI not wired)
+- [x] **Memory pressure test** — two unit tests: fill to capacity asserts count never exceeds limit; peak memory measurement asserts < 250 MB budget
+- [x] **Notes UI in player** — `TextField` in `ClipPlayerView` edits/saves `PersistedClip.notes` via `SessionStore.updateNotes(_:for:)`
+- [x] **Settings actually applied to detectors** — `MotionThresholdDetector` and `CoreMLBallDetector` now read `effectiveThreshold`/`effectiveCooldown`/`effectiveMinConfidence`/`effectiveDepartureThreshold` from `UserDefaults` at runtime
+- [x] **CI xcpretty fix** — `gem install xcpretty` step added before build/test in `.github/workflows/ci.yml`
+- [x] **Clip delete data integrity** — `ClipGridView.deleteClip` now calls `SessionStore.removeClip(_:)` to remove the `PersistedClip` SwiftData record alongside the MP4 file; static clip list updates so the grid refreshes immediately
+- [x] **Background/foreground + interruption handling** — `CameraSession` subscribes to `UIApplication.willResignActiveNotification`, `didBecomeActiveNotification`, `AVCaptureSessionWasInterrupted`, and `AVCaptureSessionInterruptionEnded` to stop/restart automatically
+- [x] **Low-storage guard** — `ClipExporter` checks available disk space before writing; throws `ExportError.insufficientStorage` when < 50 MB free
+
+---
+
+## 🤖 Claude can do — no input needed
 
 ### Documentation
 

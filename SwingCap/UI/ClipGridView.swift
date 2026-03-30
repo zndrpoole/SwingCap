@@ -7,30 +7,32 @@ import SwiftUI
 /// - `init(clips:title:)` — static array for history playback.
 struct ClipGridView: View {
 
-    private let clips: [Clip]
     private let title: String
     /// When non-nil, the grid is backed by a live session and stays reactive.
     private let liveSession: DrivingSession?
+    /// Mutable copy for the static (history) path so deletions update the grid.
+    @State private var staticClips: [Clip]
 
     @State private var selectedClip: Clip?
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionStore.self) private var sessionStore
 
     // Live session init (active session review)
     init(session: DrivingSession) {
         self.liveSession = session
-        self.clips = []          // unused — body reads from liveSession
+        self._staticClips = State(initialValue: [])
         self.title = "Clips"
     }
 
     // Static init (history viewer)
     init(clips: [Clip], title: String = "Clips") {
         self.liveSession = nil
-        self.clips = clips
+        self._staticClips = State(initialValue: clips)
         self.title = title
     }
 
     private var displayedClips: [Clip] {
-        liveSession?.clips ?? clips
+        liveSession?.clips ?? staticClips
     }
 
     private let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
@@ -86,8 +88,12 @@ struct ClipGridView: View {
     private func deleteClip(_ clip: Clip) {
         // Remove the MP4 file from disk
         try? FileManager.default.removeItem(at: clip.url)
-        // Remove from live session if applicable
+        // Remove from live session in-memory state
         liveSession?.removeClip(clip)
+        // Remove the persisted SwiftData record
+        sessionStore.removeClip(clip)
+        // Update the static list (no-op for live sessions)
+        staticClips.removeAll { $0.id == clip.id }
     }
 
     private var emptyState: some View {

@@ -62,6 +62,35 @@ final class SessionStore {
         fetchSessions()
     }
 
+    /// Updates the notes field on the persisted record for `clip`.
+    func updateNotes(_ notes: String, for clip: Clip) {
+        let record = pastSessions
+            .flatMap { $0.clips }
+            .first { $0.id == clip.id }
+        guard let record else { return }
+        record.notes = notes
+        save()
+    }
+
+    /// Returns the persisted notes for `clip`, or `nil` if not found.
+    func notes(for clip: Clip) -> String? {
+        pastSessions
+            .flatMap { $0.clips }
+            .first { $0.id == clip.id }
+            .map { $0.notes }
+    }
+
+    /// Deletes a single clip from whichever session owns it.
+    func removeClip(_ clip: Clip) {
+        let match = pastSessions
+            .flatMap { $0.clips }
+            .first { $0.id == clip.id }
+        guard let record = match else { return }
+        context.delete(record)
+        save()
+        fetchSessions()
+    }
+
     /// Deletes a session and all its clips from the store.
     func delete(_ session: PersistedSession) {
         context.delete(session)

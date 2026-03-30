@@ -8,8 +8,11 @@ struct ClipPlayerView: View {
 
     let clip: Clip
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionStore.self) private var sessionStore
     @State private var vm: ClipPlayerViewModel
     @State private var exportState: ExportState = .idle
+    @State private var notes: String = ""
+    @FocusState private var notesFocused: Bool
 
     private enum ExportState {
         case idle, saving, saved, failed
@@ -33,7 +36,11 @@ struct ClipPlayerView: View {
         .overlay(alignment: .topTrailing) { topTrailingButtons }
         .overlay(alignment: .top) { exportToast }
         .preferredColorScheme(.dark)
-        .onDisappear { vm.player.pause() }
+        .onAppear { notes = sessionStore.notes(for: clip) ?? "" }
+        .onDisappear {
+            vm.player.pause()
+            saveNotes()
+        }
     }
 
     // MARK: - Controls panel
@@ -43,6 +50,7 @@ struct ClipPlayerView: View {
             speedButtons
             scrubber
             transportRow
+            notesField
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -138,6 +146,19 @@ struct ClipPlayerView: View {
         .padding(.bottom, 4)
     }
 
+    private var notesField: some View {
+        TextField("Add a note…", text: $notes)
+            .font(.caption)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            .focused($notesFocused)
+            .submitLabel(.done)
+            .onSubmit { saveNotes() }
+            .tint(.white)
+    }
+
     // MARK: - Top-trailing buttons (dismiss + share)
 
     private var topTrailingButtons: some View {
@@ -193,6 +214,12 @@ struct ClipPlayerView: View {
             }
         }
         .animation(.spring(duration: 0.3), value: exportState == .saved || exportState == .failed)
+    }
+
+    // MARK: - Notes
+
+    private func saveNotes() {
+        sessionStore.updateNotes(notes, for: clip)
     }
 
     // MARK: - Save to Photos

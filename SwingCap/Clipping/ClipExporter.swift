@@ -12,6 +12,8 @@ actor ClipExporter {
     // MARK: - Configuration
 
     private static let targetBitrate = 6_000_000   // 6 Mbps — good for 720p/60
+    /// Refuse to start a new export if free disk space falls below this threshold (50 MB).
+    private static let minimumFreeSpaceBytes: Int64 = 50 * 1024 * 1024
     private let outputDirectory: URL
 
     // MARK: - Init
@@ -38,6 +40,13 @@ actor ClipExporter {
         onProgress: ((Float) -> Void)? = nil
     ) async throws -> Clip {
         guard let firstFrame = frames.first else { throw ExportError.noFrames }
+
+        // Guard against writing when storage is critically low.
+        if let freeSpace = try? outputDirectory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+                                               .volumeAvailableCapacity,
+           Int64(freeSpace) < Self.minimumFreeSpaceBytes {
+            throw ExportError.insufficientStorage
+        }
 
         let outputURL = outputDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
 
@@ -142,12 +151,14 @@ extension ClipExporter {
         case noFrames
         case writerCreationFailed
         case writingFailed(Error?)
+        case insufficientStorage
 
         var errorDescription: String? {
             switch self {
             case .noFrames:              "No frames provided for export."
             case .writerCreationFailed:  "Failed to create AVAssetWriter."
             case .writingFailed(let e):  "Encoding failed: \(e?.localizedDescription ?? "unknown")"
+            case .insufficientStorage:   "Not enough free storage to save this clip (need at least 50 MB)."
             }
         }
     }

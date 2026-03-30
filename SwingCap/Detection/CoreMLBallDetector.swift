@@ -38,6 +38,18 @@ final class CoreMLBallDetector: StrikeDetectorProtocol {
     /// Label name used by the YOLO model for the golf ball class.
     static let targetClassName = "golf_ball"
 
+    // MARK: - Runtime-tunable values (read from UserDefaults set by SettingsView)
+
+    private var effectiveMinConfidence: Float {
+        let v = UserDefaults.standard.double(forKey: "mlMinConfidence")
+        return v > 0 ? Float(v) : Self.minBallConfidence
+    }
+
+    private var effectiveDepartureThreshold: Int {
+        let v = UserDefaults.standard.double(forKey: "departureFrameThreshold")
+        return v > 0 ? Int(v) : Self.departureFrameThreshold
+    }
+
     // MARK: - Vision
 
     private let request: VNCoreMLRequest
@@ -134,7 +146,7 @@ final class CoreMLBallDetector: StrikeDetectorProtocol {
             .filter { obs in
                 guard let label = obs.labels.first else { return false }
                 return label.identifier == Self.targetClassName
-                    && label.confidence >= Self.minBallConfidence
+                    && label.confidence >= effectiveMinConfidence
                     && obs.boundingBox.width * obs.boundingBox.height >= Self.minBallNormalizedArea
             }
             .max { ($0.labels.first?.confidence ?? 0) < ($1.labels.first?.confidence ?? 0) }
@@ -166,7 +178,7 @@ final class CoreMLBallDetector: StrikeDetectorProtocol {
                 trackingState = .tracking(lastBox: obs.boundingBox, missedCount: 0)
             } else {
                 let newMissed = missedCount + 1
-                if newMissed >= Self.departureFrameThreshold {
+                if newMissed >= effectiveDepartureThreshold {
                     // Ball has departed — enforce cooldown then emit
                     if shouldEmitStrike(at: pts) {
                         lastStrikeTime = pts

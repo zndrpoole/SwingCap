@@ -1,5 +1,6 @@
 import AVFoundation
 import Observation
+import UIKit
 
 @Observable
 final class CameraSession: NSObject {
@@ -73,7 +74,40 @@ final class CameraSession: NSObject {
         DispatchQueue.main.async { self.previewLayer = layer }
 
         rebindDelegate()
+        subscribeToNotifications()
     }
+
+    // MARK: - Notifications
+
+    private func subscribeToNotifications() {
+        let nc = NotificationCenter.default
+        nc.addObserver(self,
+                       selector: #selector(appWillResignActive),
+                       name: UIApplication.willResignActiveNotification,
+                       object: nil)
+        nc.addObserver(self,
+                       selector: #selector(appDidBecomeActive),
+                       name: UIApplication.didBecomeActiveNotification,
+                       object: nil)
+        nc.addObserver(self,
+                       selector: #selector(sessionWasInterrupted),
+                       name: .AVCaptureSessionWasInterrupted,
+                       object: captureSession)
+        nc.addObserver(self,
+                       selector: #selector(sessionInterruptionEnded),
+                       name: .AVCaptureSessionInterruptionEnded,
+                       object: captureSession)
+    }
+
+    @objc private func appWillResignActive() { stop() }
+
+    @objc private func appDidBecomeActive() { start() }
+
+    @objc private func sessionWasInterrupted() {
+        DispatchQueue.main.async { self.isRunning = false }
+    }
+
+    @objc private func sessionInterruptionEnded() { start() }
 
     // MARK: - Lifecycle
 

@@ -22,6 +22,18 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
     /// 8 gives ~1/64 of all pixels with negligible accuracy cost.
     private static let samplingStep = 8
 
+    // MARK: - Runtime-tunable values (read from UserDefaults set by SettingsView)
+
+    private var effectiveThreshold: Float {
+        let v = UserDefaults.standard.double(forKey: "motionThreshold")
+        return v > 0 ? Float(v) : Self.motionThreshold
+    }
+
+    private var effectiveCooldown: TimeInterval {
+        let v = UserDefaults.standard.double(forKey: "cooldownSeconds")
+        return v > 0 ? v : Self.cooldownSeconds
+    }
+
     // MARK: - State
 
     private var previousPixelBuffer: CVPixelBuffer?
@@ -44,19 +56,20 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
         if lastStrikeTime.isValid {
             let elapsed = CMTimeGetSeconds(CMTimeSubtract(pts, lastStrikeTime))
-            guard elapsed >= Self.cooldownSeconds else { return }
+            guard elapsed >= effectiveCooldown else { return }
         }
 
         let score = motionScore(current: current, previous: previous)
 #if DEBUG
         lastScore = score
 #endif
-        guard score > Self.motionThreshold else { return }
+        let threshold = effectiveThreshold
+        guard score > threshold else { return }
 
         lastStrikeTime = pts
         let event = StrikeEvent(
             timestamp: pts,
-            confidence: min(1.0, score / Self.motionThreshold * 0.5)
+            confidence: min(1.0, score / threshold * 0.5)
         )
         onStrike?(event)
     }
