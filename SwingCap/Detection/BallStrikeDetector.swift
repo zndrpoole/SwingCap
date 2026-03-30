@@ -1,102 +1,82 @@
-import CoreMedia
-import CoreVideo
+import AVFoundation
+import CoreML
+import Vision
 
-/// Placeholder strike detector based on inter-frame motion energy.
+/// Routes strike detection to the best available implementation at runtime.
 ///
-/// Works by computing the mean absolute difference of luma (Y-plane) values
-/// between consecutive frames. A swing produces a sudden large motion score
-/// as the club and departing ball sweep through the frame.
+/// On init the app immediately starts using `MotionThresholdDetector` so
+/// detection works from the very first frame. A background task then loads
+/// `GolfBallDetector.mlpackage` — if found, the implementation is swapped
+/// to `CoreMLBallDetector` with no interruption to the camera pipeline.
 ///
-/// Replace the body of `process(_:)` with Core ML inference in Phase 3.
+/// `FrameProcessor` sees only this type and calls `process(_:)` / `onStrike`
+/// — it never needs to know which strategy is active.
 final class BallStrikeDetector {
 
-    // MARK: - Tunable constants
+    // MARK: - Model bundle name
 
-    /// Mean absolute luma difference, as a fraction of 255, required to
-    /// classify a frame pair as a strike. Typical quiet-scene noise is
-    /// < 0.01; a full swing through frame easily exceeds 0.04.
-    static let motionThreshold: Float = 0.035
+    private static let mlPackageName = "GolfBallDetector"
 
-    /// Minimum seconds between consecutive strike events (prevents the tail
-    /// of a swing from triggering a second clip).
-    static let cooldownSeconds: TimeInterval = 3.0
+    // MARK: - Implementation (lock-protected for async swap)
 
-    /// Sample every Nth pixel row and column when computing motion.
-    /// Higher = faster but coarser. 8 gives ~1/64 of pixels at negligible
-    /// accuracy cost for this use-case.
-    private static let samplingStep = 8
+    private var _implementation: any StrikeDetectorProtocol
+    private let implLock = NSLock()
 
-    // MARK: - State
+    private var implementation: any StrikeDetectorProtocol {
+        get { implLock.withLock { _implementation } }
+        set { implLock.withLock { _implementation = newValue } }
+    }
 
-    private var previousPixelBuffer: CVPixelBuffer?
-    private var lastStrikeTime: CMTime = .invalid
+    // MARK: - StrikeDetectorProtocol forwarding
 
-    /// Called on the camera frames queue when a strike is detected.
-    var onStrike: ((StrikeEvent) -> Void)?
-
-    // MARK: - API
+    var onStrike: ((StrikeEvent) -> Void)? {
+        get { implLock.withLock { _implementation.onStrike } }
+        set { implLock.withLock { _implementation.onStrike = newValue } }
+    }
 
     func process(_ sampleBuffer: CMSampleBuffer) {
-        guard let current = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        defer { previousPixelBuffer = current }
-        guard let previous = previousPixelBuffer else { return }
-
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-
-        // Enforce cooldown
-        if lastStrikeTime.isValid {
-            let elapsed = CMTimeGetSeconds(CMTimeSubtract(pts, lastStrikeTime))
-            guard elapsed >= Self.cooldownSeconds else { return }
-        }
-
-        let score = motionScore(current: current, previous: previous)
-        guard score > Self.motionThreshold else { return }
-
-        lastStrikeTime = pts
-        let event = StrikeEvent(timestamp: pts, confidence: min(1.0, score / Self.motionThreshold * 0.5))
-        onStrike?(event)
+        implementation.process(sampleBuffer)
     }
 
-    // MARK: - Luma differencing
+    // MARK: - Init
 
-    private func motionScore(current: CVPixelBuffer, previous: CVPixelBuffer) -> Float {
-        CVPixelBufferLockBaseAddress(current, .readOnly)
-        CVPixelBufferLockBaseAddress(previous, .readOnly)
-        defer {
-            CVPixelBufferUnlockBaseAddress(current, .readOnly)
-            CVPixelBufferUnlockBaseAddress(previous, .readOnly)
-        }
+    init() {
+        // Start immediately with motion threshold — zero wait.
+        _implementation = MotionThresholdDetector()
 
-        // Y-plane is plane 0 in kCVPixelFormatType_420YpCbCr8BiPlanar*
-        guard
-            let curBase  = CVPixelBufferGetBaseAddressOfPlane(current,  0),
-            let prevBase = CVPixelBufferGetBaseAddressOfPlane(previous, 0)
-        else { return 0 }
-
-        let width  = CVPixelBufferGetWidthOfPlane(current, 0)
-        let height = CVPixelBufferGetHeightOfPlane(current, 0)
-        let stride = CVPixelBufferGetBytesPerRowOfPlane(current, 0)
-        let step   = Self.samplingStep
-
-        let cur  = curBase.assumingMemoryBound(to: UInt8.self)
-        let prev = prevBase.assumingMemoryBound(to: UInt8.self)
-
-        var totalDiff: Int64 = 0
-        var sampleCount: Int64 = 0
-
-        var row = 0
-        while row < height {
-            var col = 0
-            while col < width {
-                let idx = row * stride + col
-                totalDiff += Int64(abs(Int32(cur[idx]) - Int32(prev[idx])))
-                sampleCount += 1
-                col += step
+        // Upgrade to Core ML in the background (~100–500ms for model load).
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            if let vnModel = Self.loadMLModel() {
+                let coreML = CoreMLBallDetector(vnModel: vnModel)
+                // Transfer the callback before swapping so no event is missed.
+                coreML.onStrike = self.onStrike
+                self.implementation = coreML
+                print("SwingCap: upgraded to Core ML ball detector")
+            } else {
+                print("⚠️ SwingCap: \(Self.mlPackageName).mlpackage not found — using motion threshold detector")
             }
-            row += step
         }
-
-        guard sampleCount > 0 else { return 0 }
-        return Float(totalDiff) / Float(sampleCount) / 255.0
     }
+
+    // MARK: - Model loading
+
+    private static func loadMLModel() -> VNCoreMLModel? {
+        guard
+            let url = Bundle.main.url(
+                forResource: mlPackageName,
+                withExtension: "mlpackage"
+            ),
+            let mlModel = try? MLModel(contentsOf: url),
+            let vnModel = try? VNCoreMLModel(for: mlModel)
+        else { return nil }
+        return vnModel
+    }
+
+    // MARK: - Debug
+
+#if DEBUG
+    /// Exposes the active detector type name for unit tests.
+    var detectorTypeName: String { String(describing: type(of: implementation)) }
+#endif
 }

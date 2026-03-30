@@ -26,6 +26,7 @@ targets:
           - Resources/Info.plist
     resources:
       - SwingCap/Resources
+      - SwingCap/Detection/Models
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.swingcap.app
