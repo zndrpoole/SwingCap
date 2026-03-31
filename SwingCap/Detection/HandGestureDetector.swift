@@ -163,10 +163,11 @@ final class HandGestureDetector {
         else { return nil }
 
         let verticalOffset = thumbTip.y - thumbMCP.y  // positive = tip above base
+        let threshold = CGFloat(Self.thumbAxisThreshold)
 
-        if verticalOffset > Self.thumbAxisThreshold {
+        if verticalOffset > threshold {
             return .good   // thumbs-up
-        } else if verticalOffset < -Self.thumbAxisThreshold {
+        } else if verticalOffset < -threshold {
             return .bad    // thumbs-down
         }
         return nil   // horizontal — ambiguous
