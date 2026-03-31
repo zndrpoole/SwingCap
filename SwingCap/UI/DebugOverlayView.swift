@@ -1,8 +1,19 @@
 #if DEBUG
 import SwiftUI
 
-/// Floating HUD shown in DEBUG builds only.
-/// Displays live detection confidence, frame count, and export state.
+/// Floating diagnostic HUD shown only in DEBUG builds.
+///
+/// Displayed as a bottom-left overlay in `SessionView`. Gives real-time
+/// visibility into the detection pipeline without requiring Instruments:
+///
+/// - **Detector**: which implementation is active (`MotionThresholdDetector`
+///   or `CoreMLBallDetector`). Changes ~0.5s after app launch once the model loads.
+/// - **Motion**: current luma-diff score. Shown in red when it exceeds
+///   `MotionThresholdDetector.motionThreshold` (i.e. a strike would be emitted).
+/// - **Buffer**: how many frames are currently in the rolling buffer. Should
+///   stay near 120 while idle; drops to ~0 immediately after a strike.
+/// - **Clips**: total clips saved in the current session.
+/// - **Exporting**: appears (in yellow) only while `AVAssetWriter` is active.
 struct DebugOverlayView: View {
 
     let motionScore: Float

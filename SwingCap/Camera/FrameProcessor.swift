@@ -3,12 +3,32 @@ import AVFoundation
 /// Receives raw `CMSampleBuffer` frames from `AVCaptureVideoDataOutput`,
 /// feeds them into the rolling buffer, and runs strike detection.
 ///
-/// On a confirmed strike the processor switches into a post-strike capture
-/// window, collects `postStrikeFrameCount` additional frames, then emits
-/// the full window (pre + post) via `onFrameWindowReady`.
+/// ## State machine
 ///
-/// All methods are called on the camera frames queue — no additional locking
-/// is needed for the state machine.
+/// ```
+/// .idle
+///   │  Every frame → append to rollingBuffer + run detector
+///   │
+///   └─ Strike detected
+///         │  Snapshot rollingBuffer (pre-strike frames)
+///         │  Clear rollingBuffer
+///         ↓
+///      .capturingPost(preFrames:remaining:)
+///         │  Every frame → append to preFrames array, decrement remaining
+///         │
+///         └─ remaining == 0
+///               │  Emit full window (pre + post) via onFrameWindowReady
+///               ↓
+///            .idle
+/// ```
+///
+/// **Why clear the rolling buffer on strike?** To prevent a second close-in
+/// detection from grabbing frames that are already part of the first clip's
+/// post-window. The buffer refills naturally once we return to `.idle`.
+///
+/// **Threading**: All methods are called on the camera frames queue — the
+/// single serial queue set up by `CameraSession.rebindDelegate()`. The state
+/// machine is therefore single-threaded and needs no additional locking.
 final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     // MARK: - Configuration
@@ -22,7 +42,8 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     let detector: BallStrikeDetector
 
     /// Called (on the frames queue) when a complete pre+post window is ready.
-    /// Ownership of the frame array is transferred to the caller.
+    /// Ownership of the frame array is transferred to the caller; they are
+    /// responsible for passing it on to `ClipExporter` and releasing it.
     var onFrameWindowReady: (([CMSampleBuffer]) -> Void)?
 
     // MARK: - State machine
@@ -30,8 +51,9 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private enum State {
         case idle
         /// Collecting post-strike frames.
-        /// `preFrames`: snapshot from rolling buffer at detection moment.
-        /// `remaining`: how many more post-strike frames to collect.
+        /// - `preFrames`: snapshot from rolling buffer at detection moment.
+        /// - `remaining`: how many more post-strike frames to collect before
+        ///   the window is complete and `onFrameWindowReady` fires.
         case capturingPost(preFrames: [CMSampleBuffer], remaining: Int)
     }
 
@@ -44,6 +66,7 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         self.detector = BallStrikeDetector()
         super.init()
 
+        // Wire the detector's output back into this processor's state machine.
         detector.onStrike = { [weak self] event in
             self?.handleStrike(event)
         }
@@ -51,6 +74,11 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
+    /// Called once per frame on the camera frames queue.
+    ///
+    /// In `.idle`:  feed the frame into both the rolling buffer and detector.
+    /// In `.capturingPost`:  accumulate post-strike frames until the window
+    ///                       is full, then fire `onFrameWindowReady` and reset.
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
@@ -64,17 +92,22 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         case .capturingPost(let preFrames, let remaining):
             let newRemaining = remaining - 1
             if newRemaining <= 0 {
-                // Window complete — emit and reset
+                // Window complete — emit and reset to idle.
+                // The full window is preFrames (up to 120) + this final frame.
                 let fullWindow = preFrames + [sampleBuffer]
                 state = .idle
                 onFrameWindowReady?(fullWindow)
             } else {
+                // Keep accumulating post-strike frames.
                 state = .capturingPost(preFrames: preFrames + [sampleBuffer],
                                        remaining: newRemaining)
             }
         }
     }
 
+    /// Called when AVFoundation drops a frame (typically due to backpressure).
+    /// In production a drop during post-capture shortens the clip slightly;
+    /// in DEBUG we print the reason to help diagnose pipeline pressure.
     func captureOutput(
         _ output: AVCaptureOutput,
         didDrop sampleBuffer: CMSampleBuffer,
@@ -92,8 +125,14 @@ final class FrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     // MARK: - Strike handler (called on frames queue)
 
+    /// Responds to a confirmed strike event from the detector.
+    /// Ignored if we are already in `capturingPost` (i.e. a second swing
+    /// happens before the first clip's post-window finishes).
     private func handleStrike(_ event: StrikeEvent) {
-        guard case .idle = state else { return }  // ignore while already capturing
+        guard case .idle = state else { return }
+
+        // Take everything the rolling buffer has collected so far as the
+        // pre-strike window, then clear it so fresh frames refill cleanly.
         let preFrames = rollingBuffer.snapshot()
         rollingBuffer.clear()
         state = .capturingPost(preFrames: preFrames, remaining: postStrikeFrameCount)

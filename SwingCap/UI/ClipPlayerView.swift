@@ -3,7 +3,23 @@ import Photos
 import SwiftUI
 
 /// Full-screen video player for reviewing a single swing clip.
-/// Controls: speed (0.25×/0.5×/1×), scrubber, frame-step, loop toggle.
+///
+/// ## Controls
+/// - Speed buttons (0.25×, 0.5×, 1×) — change `ClipPlayerViewModel.playbackRate`.
+/// - Scrubber slider — drag to scrub; see `ClipPlayerViewModel` for how the
+///   `isScrubbing` flag prevents the time observer from fighting the drag.
+/// - Frame step buttons — use `AVPlayerItem.step(byCount:)` for frame accuracy.
+/// - Loop toggle — handled by `ClipPlayerViewModel`'s end-of-item notification.
+///
+/// ## Share to Photos
+/// Calls `PHPhotoLibrary.requestAuthorization(for: .addOnly)` then
+/// `PHAssetChangeRequest.creationRequestForAssetFromVideo`. The result
+/// is shown as an animated toast that auto-dismisses after 2.5 seconds.
+///
+/// ## Notes
+/// A single-line `TextField` at the bottom of the controls panel lets the user
+/// annotate the clip. Notes are loaded from `SessionStore` on appear and saved
+/// back on dismiss or when the user submits the text field.
 struct ClipPlayerView: View {
 
     let clip: Clip
@@ -11,6 +27,7 @@ struct ClipPlayerView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var vm: ClipPlayerViewModel
     @State private var exportState: ExportState = .idle
+    /// In-flight notes text bound to the notes `TextField`.
     @State private var notes: String = ""
     @FocusState private var notesFocused: Bool
 
@@ -36,9 +53,11 @@ struct ClipPlayerView: View {
         .overlay(alignment: .topTrailing) { topTrailingButtons }
         .overlay(alignment: .top) { exportToast }
         .preferredColorScheme(.dark)
+        // Load persisted notes when the player appears.
         .onAppear { notes = sessionStore.notes(for: clip) ?? "" }
         .onDisappear {
             vm.player.pause()
+            // Persist any unsaved notes when the player is dismissed.
             saveNotes()
         }
     }
@@ -91,6 +110,7 @@ struct ClipPlayerView: View {
                 ),
                 in: 0...max(vm.duration, 0.001)
             ) { editing in
+                // `editing` is `true` when drag starts, `false` when it ends.
                 if editing { vm.scrubBegan() }
                 else { vm.scrubEnded(at: vm.currentTime) }
             }
@@ -108,7 +128,7 @@ struct ClipPlayerView: View {
 
     private var transportRow: some View {
         HStack(spacing: 32) {
-            // Step back
+            // Step back one video frame
             Button { vm.stepBack() } label: {
                 Image(systemName: "backward.frame.fill")
                     .font(.title3)
@@ -125,7 +145,7 @@ struct ClipPlayerView: View {
             }
             .buttonStyle(.plain)
 
-            // Step forward
+            // Step forward one video frame
             Button { vm.stepForward() } label: {
                 Image(systemName: "forward.frame.fill")
                     .font(.title3)
@@ -135,7 +155,7 @@ struct ClipPlayerView: View {
 
             Spacer()
 
-            // Loop toggle
+            // Loop toggle — highlights when active
             Button { vm.isLooping.toggle() } label: {
                 Image(systemName: "repeat")
                     .font(.body)
@@ -146,6 +166,8 @@ struct ClipPlayerView: View {
         .padding(.bottom, 4)
     }
 
+    /// Single-line text field for annotating the clip.
+    /// Auto-saves on submit (keyboard return) and on player dismiss.
     private var notesField: some View {
         TextField("Add a note…", text: $notes)
             .font(.caption)
@@ -218,12 +240,18 @@ struct ClipPlayerView: View {
 
     // MARK: - Notes
 
+    /// Writes the current `notes` string to the matching `PersistedClip` record
+    /// via `SessionStore`. Silently no-ops if the clip has no persisted record
+    /// (e.g. the `/dev/null` debug placeholder).
     private func saveNotes() {
         sessionStore.updateNotes(notes, for: clip)
     }
 
     // MARK: - Save to Photos
 
+    /// Requests `.addOnly` photo library authorization then adds the clip's
+    /// MP4 file as a video asset. The result is reflected in `exportState`
+    /// which drives the toast overlay.
     private func saveToPhotos() {
         guard exportState != .saving else { return }
         exportState = .saving
@@ -238,7 +266,7 @@ struct ClipPlayerView: View {
             }) { success, _ in
                 DispatchQueue.main.async {
                     self.exportState = success ? .saved : .failed
-                    // Auto-clear the toast after 2.5 s
+                    // Auto-clear the toast after 2.5 s so it doesn't linger.
                     Task { @MainActor in
                         try? await Task.sleep(for: .seconds(2.5))
                         if self.exportState == .saved || self.exportState == .failed {

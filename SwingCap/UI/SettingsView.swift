@@ -2,6 +2,21 @@ import SwiftUI
 
 /// Lets the user tune detection sensitivity and view storage stats.
 /// Presented as a sheet from `SessionView`.
+///
+/// ## UserDefaults contract
+///
+/// The four `@AppStorage` keys written here are read at runtime by the
+/// detector classes via their `effective*` computed properties:
+///
+/// | Key                      | Read by                                   |
+/// |--------------------------|-------------------------------------------|
+/// | `"motionThreshold"`      | `MotionThresholdDetector.effectiveThreshold`  |
+/// | `"cooldownSeconds"`      | `MotionThresholdDetector.effectiveCooldown`   |
+/// | `"mlMinConfidence"`      | `CoreMLBallDetector.effectiveMinConfidence`   |
+/// | `"departureFrameThreshold"` | `CoreMLBallDetector.effectiveDepartureThreshold` |
+///
+/// Changes take effect on the very next camera frame — no session restart needed.
+/// Defaults (shown in the slider hints) come from each detector's static `let` constants.
 struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss

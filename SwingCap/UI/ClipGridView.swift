@@ -2,9 +2,24 @@ import SwiftUI
 
 /// Scrollable grid of clip thumbnails for post-session review.
 ///
-/// Two initialisers are available:
-/// - `init(session:)` — live active session; grid stays reactive.
-/// - `init(clips:title:)` — static array for history playback.
+/// ## Two initialisers
+///
+/// - `init(session:)` — live active session. `displayedClips` reads from
+///   `liveSession.clips` which is `@Observable`, so the grid automatically
+///   updates as clips are added during the session.
+///
+/// - `init(clips:title:)` — static snapshot for history playback. Clips are
+///   stored in a `@State` array (`staticClips`) so deletions can update the
+///   grid immediately without needing a live session reference.
+///
+/// ## Deletion
+///
+/// `deleteClip(_:)` performs three operations in order:
+/// 1. Removes the MP4 file from disk.
+/// 2. Removes the `Clip` from the live session's in-memory array (no-op for
+///    the static path).
+/// 3. Removes the `PersistedClip` SwiftData record via `SessionStore`.
+/// 4. Removes the clip from `staticClips` so the history grid refreshes.
 struct ClipGridView: View {
 
     private let title: String
@@ -20,7 +35,7 @@ struct ClipGridView: View {
     // Live session init (active session review)
     init(session: DrivingSession) {
         self.liveSession = session
-        self._staticClips = State(initialValue: [])
+        self._staticClips = State(initialValue: [])   // unused — body reads liveSession
         self.title = "Clips"
     }
 
@@ -31,6 +46,7 @@ struct ClipGridView: View {
         self.title = title
     }
 
+    /// Returns the appropriate clip source depending on which init was used.
     private var displayedClips: [Clip] {
         liveSession?.clips ?? staticClips
     }
@@ -85,6 +101,8 @@ struct ClipGridView: View {
         }
     }
 
+    /// Deletes a clip from disk, the live session (if applicable), SwiftData,
+    /// and the local `staticClips` array (for the history path).
     private func deleteClip(_ clip: Clip) {
         // Remove the MP4 file from disk
         try? FileManager.default.removeItem(at: clip.url)

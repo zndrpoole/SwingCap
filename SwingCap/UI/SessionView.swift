@@ -1,7 +1,37 @@
 import SwiftUI
 
 /// The main screen during an active driving-range session.
-/// Shows the live camera feed with a HUD overlay.
+/// Shows the live camera feed with a transparent HUD overlay.
+///
+/// ## Startup sequence
+///
+/// 1. `.task { await startCamera() }` fires when the view appears.
+/// 2. `startCamera()` creates a `PersistedSession` record immediately via
+///    `sessionStore.beginSession()` so clips can be appended incrementally.
+/// 3. A `FrameProcessor` is created and wired into `CameraSession` as its
+///    frame delegate. The processor's `onFrameWindowReady` closure calls
+///    `session.handleFrameWindow(_:)` which spawns the encoding task.
+/// 4. `camera.configure()` sets up the AVCaptureSession; `camera.start()`
+///    begins the frame stream.
+///
+/// ## Persistence
+///
+/// `session.clips` is an `@Observable` array. SwiftUI re-evaluates the body
+/// when its count changes. The `.onChange(of: session.clips.count)` modifier
+/// calls `persistLatestClip()` to write each newly exported clip to SwiftData
+/// exactly once.
+///
+/// ## HUD elements
+///
+/// - **History button** (top-left): shows a green badge with the total clip
+///   count across all past sessions. Hidden when there are no past sessions.
+/// - **Settings button** (top-left): opens `SettingsView` as a sheet.
+/// - **Clip counter** (top-right): tappable pill showing the current session's
+///   clip count; opens `ClipGridView` as a sheet for in-session review.
+/// - **Status pill** (bottom-center): shows camera state, export progress, and
+///   a live M:SS elapsed timer.
+/// - **White flash overlay**: briefly shown (200ms) each time a clip is saved
+///   to give tactile visual feedback.
 struct SessionView: View {
 
     @Environment(SessionStore.self) private var sessionStore
@@ -17,6 +47,7 @@ struct SessionView: View {
     @State private var activeRecord: PersistedSession?
     @State private var showSettings = false
     @State private var sessionElapsed: TimeInterval = 0
+    /// Fires every second on the main run loop to update the elapsed timer label.
     private let sessionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -32,6 +63,7 @@ struct SessionView: View {
         }
         .task { await startCamera() }
         .onDisappear { camera.stop() }
+        // Each time a new clip is appended, persist it to SwiftData.
         .onChange(of: session.clips.count) { _, _ in persistLatestClip() }
         .onReceive(sessionTimer) { _ in
             guard camera.isRunning else { return }
@@ -48,7 +80,7 @@ struct SessionView: View {
 
     private var hud: some View {
         VStack {
-            // Top row: debug/history buttons (leading) + clip counter (trailing)
+            // Top row: history/settings (leading) + clip counter (trailing)
             HStack {
 #if DEBUG
                 debugInjectButton
@@ -83,6 +115,7 @@ struct SessionView: View {
         }
         .animation(.easeOut(duration: 0.2), value: showClipFlash)
 #if DEBUG
+        // Debug overlay shows live detection confidence, buffer fill, and export state.
         .overlay(alignment: .bottomLeading) {
             if let proc = processor {
                 DebugOverlayView(
@@ -111,6 +144,8 @@ struct SessionView: View {
         }
     }
 
+    /// History button: visible only when past sessions exist, shows a green
+    /// badge with the total clip count capped at 99.
     private var historyButton: some View {
         let totalClips = sessionStore.pastSessions.reduce(0) { $0 + $1.clipCount }
         return Button {
@@ -150,6 +185,8 @@ struct SessionView: View {
         .buttonStyle(.plain)
     }
 
+    /// Tappable clip counter pill — tapping opens the in-session clip review grid.
+    /// Hidden (opacity 0) when no clips have been saved yet.
     private var clipCounter: some View {
         Button {
             guard session.clipCount > 0 else { return }
@@ -174,7 +211,7 @@ struct SessionView: View {
 
     private var statusPill: some View {
         HStack(spacing: 8) {
-            // Live indicator
+            // Coloured dot: orange = camera not ready, yellow = exporting, green = watching
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
@@ -227,9 +264,17 @@ struct SessionView: View {
 
     // MARK: - Camera startup
 
+    /// Wires the full pipeline and starts the camera session.
+    ///
+    /// Order matters:
+    /// 1. `sessionStore.beginSession()` — create the SwiftData record first so
+    ///    `persistLatestClip()` always has a valid `activeRecord` to append to.
+    /// 2. Create and wire `FrameProcessor` — its `onFrameWindowReady` must be
+    ///    set before the session starts so no frames are missed.
+    /// 3. `camera.configure()` + `camera.start()` — last, to ensure all
+    ///    consumers are ready before frames begin arriving.
     @MainActor
     private func startCamera() async {
-        // Create a persisted record for this session up front.
         activeRecord = sessionStore.beginSession(startedAt: session.startedAt)
 
         let proc = FrameProcessor()
@@ -253,7 +298,11 @@ struct SessionView: View {
         }
     }
 
-    /// Called reactively whenever `session.clips` grows — persists the newest clip.
+    /// Called reactively whenever `session.clips` grows — persists the newest
+    /// (last) clip to SwiftData via `sessionStore.addClip(_:to:)`.
+    ///
+    /// Using `session.clips.last` rather than a specific index is safe here
+    /// because clips are only ever appended, never reordered.
     private func persistLatestClip() {
         guard let record = activeRecord, let clip = session.clips.last else { return }
         sessionStore.addClip(clip, to: record)
@@ -282,6 +331,8 @@ struct SessionView: View {
     }
 #endif
 
+    /// Shows a white flash overlay for 200ms — used as visual confirmation
+    /// that a clip was just captured and saved.
     @MainActor
     private func flashScreen() async {
         showClipFlash = true

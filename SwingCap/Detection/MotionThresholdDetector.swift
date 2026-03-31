@@ -4,12 +4,26 @@ import CoreVideo
 /// Strike detector based on inter-frame luma motion energy.
 /// Used as the immediate fallback when `GolfBallDetector.mlpackage` is absent.
 ///
-/// Works by computing the mean absolute difference of Y-plane values
-/// between consecutive frames. A golf swing produces a large motion score
-/// as the club and departing ball sweep through the frame.
+/// ## Algorithm
+/// 1. Lock the Y-plane of the current and previous `CVPixelBuffer`.
+/// 2. Sample every `samplingStep`-th pixel (row and column) for performance.
+/// 3. Compute the mean absolute difference across all sampled pixels,
+///    normalised to [0, 1] by dividing by 255.
+/// 4. Compare against `effectiveThreshold`. A quiet scene (camera shake, wind)
+///    typically scores < 0.01; a full golf swing exceeds 0.04.
+///
+/// ## Cooldown
+/// After a strike is emitted the detector ignores subsequent frames for
+/// `effectiveCooldown` seconds to avoid a single swing producing multiple clips.
+///
+/// ## Tuning
+/// `motionThreshold` and `cooldownSeconds` are static defaults. The user can
+/// override them in Settings — those values are stored in `UserDefaults` and
+/// read at runtime by `effectiveThreshold` / `effectiveCooldown` so changes
+/// take effect immediately without restarting detection.
 final class MotionThresholdDetector: StrikeDetectorProtocol {
 
-    // MARK: - Tunable constants
+    // MARK: - Tunable constants (fallback defaults)
 
     /// Mean absolute luma difference (fraction of 255) to classify as a strike.
     /// Quiet-scene noise is typically < 0.01; a full swing exceeds 0.04.
@@ -24,11 +38,14 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
     // MARK: - Runtime-tunable values (read from UserDefaults set by SettingsView)
 
+    /// Returns the motion threshold the user has set in Settings, or the
+    /// static default if no custom value has been written to UserDefaults yet.
     private var effectiveThreshold: Float {
         let v = UserDefaults.standard.double(forKey: "motionThreshold")
         return v > 0 ? Float(v) : Self.motionThreshold
     }
 
+    /// Returns the cooldown duration from Settings, or the static default.
     private var effectiveCooldown: TimeInterval {
         let v = UserDefaults.standard.double(forKey: "cooldownSeconds")
         return v > 0 ? v : Self.cooldownSeconds
@@ -36,7 +53,9 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
     // MARK: - State
 
+    /// Previous frame's pixel buffer, retained for the next diff calculation.
     private var previousPixelBuffer: CVPixelBuffer?
+    /// Timestamp of the most recent emitted strike; used to enforce cooldown.
     private var lastStrikeTime: CMTime = .invalid
 
     var onStrike: ((StrikeEvent) -> Void)?
@@ -47,13 +66,20 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
     // MARK: - StrikeDetectorProtocol
 
+    /// Processes one camera frame.
+    ///
+    /// Called on the camera frames queue. The diff is computed synchronously
+    /// (the subsampling keeps it under ~0.5ms on an A14), so there is no async
+    /// dispatch here — we return before the next frame arrives.
     func process(_ sampleBuffer: CMSampleBuffer) {
         guard let current = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        // Always update previousPixelBuffer at the end, even if we skip this frame.
         defer { previousPixelBuffer = current }
         guard let previous = previousPixelBuffer else { return }
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
+        // Enforce cooldown: skip scoring if we recently emitted a strike.
         if lastStrikeTime.isValid {
             let elapsed = CMTimeGetSeconds(CMTimeSubtract(pts, lastStrikeTime))
             guard elapsed >= effectiveCooldown else { return }
@@ -67,6 +93,8 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
         guard score > threshold else { return }
 
         lastStrikeTime = pts
+        // Confidence is a simple linear scale: at exactly `threshold` it's ~0.5,
+        // at 2× threshold it's capped at 1.0.
         let event = StrikeEvent(
             timestamp: pts,
             confidence: min(1.0, score / threshold * 0.5)
@@ -76,6 +104,12 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
     // MARK: - Luma differencing
 
+    /// Computes the mean absolute per-pixel luma (Y-plane) difference between
+    /// two consecutive frames, normalised to [0, 1].
+    ///
+    /// We lock both buffers for read-only access, read raw byte pointers from
+    /// the Y-plane (plane index 0 of the YCbCr bi-planar format), then step
+    /// through them at `samplingStep` intervals to avoid a full-resolution scan.
     private func motionScore(current: CVPixelBuffer, previous: CVPixelBuffer) -> Float {
         CVPixelBufferLockBaseAddress(current, .readOnly)
         CVPixelBufferLockBaseAddress(previous, .readOnly)
@@ -91,6 +125,8 @@ final class MotionThresholdDetector: StrikeDetectorProtocol {
 
         let width  = CVPixelBufferGetWidthOfPlane(current, 0)
         let height = CVPixelBufferGetHeightOfPlane(current, 0)
+        // `stride` is bytes-per-row which may be padded beyond `width`; we use
+        // it as the row increment to avoid reading padding bytes as pixel data.
         let stride = CVPixelBufferGetBytesPerRowOfPlane(current, 0)
         let step   = Self.samplingStep
 

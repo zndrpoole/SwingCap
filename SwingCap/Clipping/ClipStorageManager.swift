@@ -1,6 +1,14 @@
 import Foundation
 
 /// Utilities for managing clip files on disk.
+///
+/// All clip MP4 files live in `Documents/SwingCap/Clips/`. This enum provides
+/// helpers to calculate storage usage and remove orphaned files (files that
+/// exist on disk but have no corresponding `PersistedClip` SwiftData record).
+///
+/// Orphaned files can accumulate if the app crashes after writing a clip file
+/// but before the SwiftData record is committed. `SessionStore` calls
+/// `deleteOrphanedFiles` once at init to clean these up.
 enum ClipStorageManager {
 
     static let clipsDirectory: URL = {
@@ -8,8 +16,12 @@ enum ClipStorageManager {
         return docs.appendingPathComponent("SwingCap/Clips", isDirectory: true)
     }()
 
-    /// Deletes MP4 files in the clips directory that have no matching filename
-    /// in `knownFileNames`. Safe to call at any time; errors are silently ignored.
+    /// Deletes MP4 files in the clips directory whose filename is not in
+    /// `knownFileNames`. Safe to call at any time; any file I/O errors are
+    /// silently ignored so a single bad file doesn't block cleanup of the rest.
+    ///
+    /// - Parameter knownFileNames: A set of bare filenames (e.g. `"ABC123.mp4"`)
+    ///   that are referenced by a `PersistedClip` record. Everything else is deleted.
     static func deleteOrphanedFiles(knownFileNames: Set<String>) {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: clipsDirectory,
@@ -24,6 +36,7 @@ enum ClipStorageManager {
     }
 
     /// Total size in bytes of all files in the clips directory.
+    /// Used by `SettingsView` to display storage consumption.
     static func totalStorageBytes() -> Int64 {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: clipsDirectory,
