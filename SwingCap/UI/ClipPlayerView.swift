@@ -25,8 +25,13 @@ struct ClipPlayerView: View {
     let clip: Clip
     @Environment(\.dismiss) private var dismiss
     @Environment(SessionStore.self) private var sessionStore
+    /// Reference to the live session (nil when opened from history).
+    /// Needed so manual rating changes update in-memory clips too.
+    var liveSession: DrivingSession?
     @State private var vm: ClipPlayerViewModel
     @State private var exportState: ExportState = .idle
+    /// Current rating — initialised from the clip, can be changed by the user.
+    @State private var rating: ShotRating?
     /// In-flight notes text bound to the notes `TextField`.
     @State private var notes: String = ""
     @FocusState private var notesFocused: Bool
@@ -35,9 +40,11 @@ struct ClipPlayerView: View {
         case idle, saving, saved, failed
     }
 
-    init(clip: Clip) {
+    init(clip: Clip, liveSession: DrivingSession? = nil) {
         self.clip = clip
+        self.liveSession = liveSession
         _vm = State(initialValue: ClipPlayerViewModel(clip: clip))
+        _rating = State(initialValue: clip.rating)
     }
 
     var body: some View {
@@ -53,8 +60,10 @@ struct ClipPlayerView: View {
         .overlay(alignment: .topTrailing) { topTrailingButtons }
         .overlay(alignment: .top) { exportToast }
         .preferredColorScheme(.dark)
-        // Load persisted notes when the player appears.
-        .onAppear { notes = sessionStore.notes(for: clip) ?? "" }
+        .onAppear {
+            notes = sessionStore.notes(for: clip) ?? ""
+            rating = sessionStore.rating(for: clip) ?? clip.rating
+        }
         .onDisappear {
             vm.player.pause()
             // Persist any unsaved notes when the player is dismissed.
@@ -66,6 +75,7 @@ struct ClipPlayerView: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
+            ratingButtons
             speedButtons
             scrubber
             transportRow
@@ -74,6 +84,43 @@ struct ClipPlayerView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .background(.ultraThinMaterial)
+    }
+
+    /// Manual rating row — tap to set, tap again to clear.
+    /// Mirrors the gesture-based rating and is always available as a fallback.
+    private var ratingButtons: some View {
+        HStack(spacing: 0) {
+            Spacer()
+            ratingButton(for: .good, label: "👍  Good")
+            Spacer()
+            ratingButton(for: .bad,  label: "👎  Bad")
+            Spacer()
+        }
+    }
+
+    private func ratingButton(for target: ShotRating, label: String) -> some View {
+        let isSelected = rating == target
+        return Button {
+            // Tapping the active rating clears it; tapping inactive sets it.
+            let newRating: ShotRating? = isSelected ? nil : target
+            rating = newRating
+            saveRating(newRating)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isSelected ? .black : .white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(
+                    isSelected
+                        ? (target == .good ? Color.green : Color.red)
+                        : Color.white.opacity(0.12),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: isSelected)
     }
 
     private var speedButtons: some View {
@@ -240,11 +287,16 @@ struct ClipPlayerView: View {
 
     // MARK: - Notes
 
-    /// Writes the current `notes` string to the matching `PersistedClip` record
-    /// via `SessionStore`. Silently no-ops if the clip has no persisted record
-    /// (e.g. the `/dev/null` debug placeholder).
+    /// Writes the current `notes` string to the matching `PersistedClip` record.
     private func saveNotes() {
         sessionStore.updateNotes(notes, for: clip)
+    }
+
+    /// Persists `newRating` and updates the in-memory clip in the live session
+    /// (if open) so the grid thumbnail badge updates without a reload.
+    private func saveRating(_ newRating: ShotRating?) {
+        sessionStore.updateRating(newRating, for: clip)
+        liveSession?.applyRating(newRating, to: clip)
     }
 
     // MARK: - Save to Photos

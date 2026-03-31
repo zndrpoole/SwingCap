@@ -14,6 +14,7 @@ import SwiftUI
 /// | `"cooldownSeconds"`      | `MotionThresholdDetector.effectiveCooldown`   |
 /// | `"mlMinConfidence"`      | `CoreMLBallDetector.effectiveMinConfidence`   |
 /// | `"departureFrameThreshold"` | `CoreMLBallDetector.effectiveDepartureThreshold` |
+/// | `"gestureWindowSeconds"`    | `FrameProcessor.gestureWindowFrameCount`          |
 ///
 /// Changes take effect on the very next camera frame — no session restart needed.
 /// Defaults (shown in the slider hints) come from each detector's static `let` constants.
@@ -35,6 +36,9 @@ struct SettingsView: View {
     @AppStorage("departureFrameThreshold")
     private var departureFrameThreshold: Double = Double(CoreMLBallDetector.departureFrameThreshold)
 
+    @AppStorage("gestureWindowSeconds")
+    private var gestureWindowSeconds: Double = 5.0
+
     // MARK: - Storage
 
     @State private var storageSize = ClipStorageManager.formattedStorageSize()
@@ -46,6 +50,7 @@ struct SettingsView: View {
                 Form {
                     motionSection
                     mlSection
+                    gestureSection
                     storageSection
                     resetSection
                 }
@@ -113,6 +118,24 @@ struct SettingsView: View {
         }
     }
 
+    private var gestureSection: some View {
+        Section {
+            SliderRow(
+                label: "Rating window (s)",
+                value: $gestureWindowSeconds,
+                range: 3...10,
+                format: "%.0f",
+                hint: "How long after each shot to listen for a thumbs gesture. Default: 5 s"
+            )
+        } header: {
+            Text("Gesture rating")
+        } footer: {
+            Text("Hold 👍 or 👎 toward the camera after each shot to rate it. Tap buttons in the clip player to rate manually.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.4))
+        }
+    }
+
     private var storageSection: some View {
         Section {
             HStack {
@@ -134,6 +157,7 @@ struct SettingsView: View {
                 cooldownSeconds = MotionThresholdDetector.cooldownSeconds
                 mlMinConfidence = Double(CoreMLBallDetector.minBallConfidence)
                 departureFrameThreshold = Double(CoreMLBallDetector.departureFrameThreshold)
+                gestureWindowSeconds = 5.0
             }
             .foregroundStyle(.red)
         }

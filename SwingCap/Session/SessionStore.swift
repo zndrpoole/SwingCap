@@ -74,6 +74,17 @@ final class SessionStore {
         fetchSessions()
     }
 
+    /// Updates the shot rating on the `PersistedClip` matching `clip`.
+    /// Called by `DrivingSession` (gesture) and `ClipPlayerView` (manual tap).
+    func updateRating(_ rating: ShotRating?, for clip: Clip) {
+        let record = pastSessions
+            .flatMap { $0.clips }
+            .first { $0.id == clip.id }
+        guard let record else { return }
+        record.rating = rating
+        save()
+    }
+
     /// Updates the user-written note on the `PersistedClip` matching `clip`.
     /// Called by `ClipPlayerView` on dismiss and when the user submits the
     /// notes text field.
@@ -84,6 +95,14 @@ final class SessionStore {
         guard let record else { return }
         record.notes = notes
         save()
+    }
+
+    /// Returns the persisted rating for `clip`, or `nil` if not found or unrated.
+    func rating(for clip: Clip) -> ShotRating? {
+        pastSessions
+            .flatMap { $0.clips }
+            .first { $0.id == clip.id }
+            .flatMap { $0.rating }
     }
 
     /// Returns the persisted notes for `clip`, or `nil` if the clip record

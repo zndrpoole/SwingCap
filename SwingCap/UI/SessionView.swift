@@ -47,6 +47,9 @@ struct SessionView: View {
     @State private var activeRecord: PersistedSession?
     @State private var showSettings = false
     @State private var sessionElapsed: TimeInterval = 0
+    /// `true` while `FrameProcessor` is in its `.awaitingGesture` state;
+    /// drives the "Rate your shot" status pill variant.
+    @State private var isAwaitingGesture = false
     /// Fires every second on the main run loop to update the elapsed timer label.
     private let sessionTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -68,6 +71,9 @@ struct SessionView: View {
         .onReceive(sessionTimer) { _ in
             guard camera.isRunning else { return }
             sessionElapsed = Date().timeIntervalSince(session.startedAt)
+#if DEBUG
+            isAwaitingGesture = processor?.isAwaitingGesture ?? false
+#endif
         }
     }
 
@@ -236,12 +242,14 @@ struct SessionView: View {
     private var statusColor: Color {
         if !camera.isRunning { return .orange }
         if session.isExporting { return .yellow }
+        if isAwaitingGesture { return .blue }
         return .green
     }
 
     private var statusLabel: String {
         if !camera.isRunning { return "Starting camera…" }
         if session.isExporting { return "Saving clip…" }
+        if isAwaitingGesture { return "Rate your shot 👍 👎" }
         return "Watching for impact…  \(formatElapsed(sessionElapsed))"
     }
 
@@ -285,7 +293,26 @@ struct SessionView: View {
             session.handleFrameWindow(frames)
             Task { @MainActor in
                 await flashScreen()
+                // The processor transitions to .awaitingGesture immediately
+                // after firing this callback — reflect that in the status pill.
+                self.isAwaitingGesture = true
             }
+        }
+
+        // Gesture events fire on the main queue (dispatched by HandGestureDetector).
+        // Route the rating to DrivingSession; DrivingSession's onRatingApplied
+        // callback then persists it to SwiftData.
+        proc.onGestureReady = { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isAwaitingGesture = false
+                self.session.handleGestureEvent(event.rating)
+            }
+        }
+
+        // Wire the rating persistence callback.
+        session.onRatingApplied = { [weak self] updatedClip in
+            self?.sessionStore.updateRating(updatedClip.rating, for: updatedClip)
         }
 
         do {

@@ -24,6 +24,16 @@ final class PersistedClip {
     var duration: TimeInterval
     /// Optional user note attached to this clip. Empty string by default.
     var notes: String
+    /// Raw string backing for `ShotRating` (`"good"`, `"bad"`, or `nil` = unrated).
+    /// Stored as a raw String rather than an enum so SwiftData doesn't need a
+    /// custom transformer and the model remains forward-compatible.
+    var ratingRawValue: String?
+
+    /// Typed accessor over `ratingRawValue`.
+    var rating: ShotRating? {
+        get { ratingRawValue.flatMap { ShotRating(rawValue: $0) } }
+        set { ratingRawValue = newValue?.rawValue }
+    }
 
     /// Creates a new `PersistedClip` from a freshly exported `Clip` value.
     init(from clip: Clip) {
@@ -33,6 +43,7 @@ final class PersistedClip {
         self.thumbnailData = clip.thumbnail?.jpegData(compressionQuality: 0.7)
         self.duration = clip.duration
         self.notes = ""
+        self.ratingRawValue = clip.rating?.rawValue
     }
 
     /// Reconstructs a `Clip` value for use in SwiftUI views.
@@ -41,7 +52,8 @@ final class PersistedClip {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let url = docs.appendingPathComponent("SwingCap/Clips/\(fileName)")
         let thumbnail = thumbnailData.flatMap { UIImage(data: $0) }
-        return Clip(id: id, url: url, createdAt: createdAt, thumbnail: thumbnail, duration: duration)
+        return Clip(id: id, url: url, createdAt: createdAt, thumbnail: thumbnail,
+                    duration: duration, rating: rating)
     }
 }
 

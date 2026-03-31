@@ -76,7 +76,7 @@ struct ClipGridView: View {
         }
         .preferredColorScheme(.dark)
         .fullScreenCover(item: $selectedClip) { clip in
-            ClipPlayerView(clip: clip)
+            ClipPlayerView(clip: clip, liveSession: liveSession)
         }
     }
 
@@ -146,6 +146,7 @@ private struct ClipThumbnailCell: View {
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
+            // Duration label (bottom-right)
             Text(String(format: "%.1fs", clip.duration))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.white)
@@ -154,9 +155,29 @@ private struct ClipThumbnailCell: View {
                 .background(.black.opacity(0.6), in: Capsule())
                 .padding(6)
         }
+        // Rating badge (top-left) — only shown when rated
+        .overlay(alignment: .topLeading) {
+            if let rating = clip.rating {
+                Text(rating == .good ? "👍" : "👎")
+                    .font(.system(size: 18))
+                    .padding(5)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .padding(6)
+            }
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: clip.rating != nil ? 2 : 1)
+        }
+    }
+
+    /// Tints the thumbnail border to reinforce the rating — green for good,
+    /// red for bad, subtle white when unrated.
+    private var borderColor: Color {
+        switch clip.rating {
+        case .good: return .green.opacity(0.7)
+        case .bad:  return .red.opacity(0.7)
+        case nil:   return .white.opacity(0.15)
         }
     }
 
